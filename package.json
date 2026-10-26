@@ -1,0 +1,17 @@
+{
+  "name": "dub-webcli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "dub.webcli.app — SRT in, timed WAV out. Local, in-browser TTS with Kokoro.",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "serve": "node server.js",
+    "test": "node --test test/unit.test.js",
+    "test:e2e": "node --test --test-timeout=1800000 test/e2e.test.js",
+    "vendor": "node scripts/vendor.js"
+  },
+  "devDependencies": {
+    "kokoro-js": "1.2.1"
+  }
+}

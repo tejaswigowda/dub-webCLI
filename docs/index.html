@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f1a" />
+    <meta name="description" content="SRT in, timed WAV out. Local, in-browser text-to-speech with Kokoro. No server, no API key." />
+    <title>dub webCLI</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233665b6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M11 5 6 9H2v6h4l5 4z'/><path d='M15.5 8.5a5 5 0 0 1 0 7'/><path d='M19 5a9 9 0 0 1 0 14'/></svg>" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3665b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 5 6 9H2v6h4l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M19 5a9 9 0 0 1 0 14" />
+      </svg>
+      <h1>dub webCLI</h1>
+      <span class="pill">SRT → WAV</span>
+      <span class="badge-local">100% local. Your SRT never leaves your browser.</span>
+      <a class="gh-link" href="https://github.com/tejaswigowda/dub-webCLI" target="_blank" rel="noopener">GitHub</a>
+    </header>
+
+    <main class="container">
+      <div class="statusbar">
+        <div class="dot" id="dot"></div>
+        <span id="statusText">Load an SRT to begin. The selected model downloads when you press Dub, then runs offline.</span>
+      </div>
+
+      <div class="grid">
+        <section class="card">
+          <div class="card-header"><span>1 · Subtitles (SRT)</span><button class="btn btn-ghost btn-sm" id="sampleBtn" type="button">Load sample</button></div>
+          <div class="card-body">
+            <label class="drop" id="drop" tabindex="0">
+              <input type="file" id="file" accept=".srt,text/plain" hidden />
+              <strong>Drop an .srt here</strong>
+              <span>or click to choose</span>
+            </label>
+            <div id="srtInfo" class="info" hidden></div>
+            <ul id="issues" class="issues"></ul>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header"><span>2 · Voice &amp; model</span></div>
+          <div class="card-body form">
+            <label class="lbl" for="voice">Voice</label>
+            <div class="row">
+              <select id="voice"></select>
+              <button class="btn btn-ghost btn-sm" id="previewBtn" type="button">▶ Preview</button>
+            </div>
+
+            <label class="lbl" for="tier">Model</label>
+            <select id="tier"></select>
+            <p class="hint" id="tierHint"></p>
+
+            <label class="lbl" for="device">Device</label>
+            <select id="device"></select>
+            <p class="hint" id="deviceHint"></p>
+
+            <button class="btn btn-primary" id="dubBtn" type="button" disabled>Dub</button>
+            <button class="btn btn-ghost" id="cancelBtn" type="button" hidden>Cancel</button>
+            <div class="progress" id="progress" hidden><div id="bar"></div></div>
+            <p class="hint" id="progressText"></p>
+          </div>
+        </section>
+      </div>
+
+      <section class="card result" id="result" hidden>
+        <div class="card-header">
+          <span>3 · Result</span>
+          <span class="actions">
+            <button class="btn btn-primary btn-sm" id="dlWav" type="button">Download WAV</button>
+            <button class="btn btn-ghost btn-sm" id="dlReport" type="button">Download report</button>
+          </span>
+        </div>
+        <div class="card-body">
+          <div id="banner" class="banner" role="status"></div>
+          <audio id="player" controls></audio>
+          <div class="wave-wrap">
+            <canvas id="wave" height="150"></canvas>
+          </div>
+          <div class="legend">
+            <span><i class="sw win"></i>cue window</span>
+            <span><i class="sw over"></i>overrun</span>
+            <span><i class="sw coll"></i>collision</span>
+          </div>
+          <p class="hint">Mux with: <code>ffmpeg -i short.mp4 -i dub.wav -c:v copy -c:a aac -shortest out.mp4</code></p>
+          <div class="table-wrap">
+            <table id="report">
+              <thead>
+                <tr><th>#</th><th>Line</th><th>Start</th><th>Window</th><th>Actual</th><th>Overrun</th><th>Collides</th><th>Status</th><th>Text</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -20,6 +20,7 @@ const MIME = {
 
 http
   .createServer((req, res) => {
+    if (process.env.DUB_LOG) console.log(req.method, req.url);
     let p = decodeURIComponent(req.url.split('?')[0]);
     if (p === '/') p = '/index.html';
     const file = path.join(ROOT, p);

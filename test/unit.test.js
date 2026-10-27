@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseSrt } from '../docs/core/srt.js';
 import { layout, mix, encodeWav, buildReport, sha256Hex } from '../docs/core/timeline.js';
 import { installRevisionPin } from '../docs/core/synth.js';
+import { resolveArgs, DEFAULTS, VOICES, TIERS } from '../docs/core/models.js';
 
 const codes = (r) => r.issues.map((i) => i.code);
 
@@ -172,4 +173,21 @@ test('zero third-party hosts in shipped page code', () => {
     const urls = fs.readFileSync(path.join(root, f), 'utf8').match(/https?:\/\/[^\s'"`)<>]+/g) ?? [];
     for (const u of urls) assert.ok(allowed.some((a) => a.test(u)), `${f}: unexpected host ${u}`);
   }
+});
+
+test('hand-off args: absent or empty means the documented reproducible default', () => {
+  assert.deepEqual(DEFAULTS, { voice: 'af_heart', tier: 'default', device: 'wasm' });
+  assert.equal(TIERS[DEFAULTS.tier].dtype, 'q8');
+  assert.deepEqual(resolveArgs({}), DEFAULTS);
+  assert.deepEqual(resolveArgs(undefined), DEFAULTS);
+  assert.deepEqual(resolveArgs({ voice: '', tier: null, device: undefined }), DEFAULTS);
+  assert.deepEqual(resolveArgs({ voice: 'bm_george', tier: 'better', device: 'webgpu' }), { voice: 'bm_george', tier: 'better', device: 'webgpu' });
+});
+
+test('hand-off args: an unknown or disabled value is an error naming the valid ones', () => {
+  assert.throws(() => resolveArgs({ voice: 'af_hart' }), (e) => /Unknown voice "af_hart"/.test(e.message) && VOICES.every((v) => e.message.includes(v.id)));
+  assert.throws(() => resolveArgs({ tier: 'q8' }), /Unknown tier "q8"\. Valid tiers: default, better, best, q4/);
+  assert.throws(() => resolveArgs({ device: 'cpu' }), /Unknown device "cpu"\. Valid devices: wasm, webgpu/);
+  assert.throws(() => resolveArgs({ device: 'webgpu' }, { webgpu: false }), /Valid devices: wasm\./);
+  assert.throws(() => resolveArgs({ voice: 7 }), /Unknown voice 7/);
 });

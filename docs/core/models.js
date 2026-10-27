@@ -59,3 +59,26 @@ export const VOICES = [
 ];
 
 export const PREVIEW_TEXT = 'The square on the hypotenuse equals the sum of the squares on the other two sides.';
+
+export const DEFAULTS = { voice: 'af_heart', tier: 'default', device: 'wasm' };
+
+/**
+ * Resolve the voice/tier/device a hand-off job asks for. Absent or empty means dub's default; anything else must be a
+ * known, enabled value, otherwise this throws an error that names the valid ones (the caller must not get a voice it did not ask for).
+ * `webgpu` is whether this browser offers WebGPU.
+ */
+export function resolveArgs(args = {}, { webgpu = true } = {}) {
+  const sets = {
+    voice: VOICES.map((v) => v.id),
+    tier: Object.keys(TIERS),
+    device: Object.keys(DEVICES).filter((d) => d !== 'webgpu' || webgpu),
+  };
+  const out = {};
+  for (const [key, valid] of Object.entries(sets)) {
+    const v = args[key];
+    if (v === undefined || v === null || v === '') out[key] = DEFAULTS[key];
+    else if (typeof v === 'string' && valid.includes(v)) out[key] = v;
+    else throw new Error(`Unknown ${key} ${JSON.stringify(v)}. Valid ${key}s: ${valid.join(', ')}. Leave it out for the default (${DEFAULTS[key]}).`);
+  }
+  return out;
+}

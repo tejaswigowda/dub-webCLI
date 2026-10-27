@@ -281,6 +281,26 @@ Time-stretching or any automatic fitting, MP3/AAC/Opus encoding (use ffmpeg), tr
 
 ---
 
+## Use it from another page
+
+A page that opens dub in a popup can hand it an SRT and get the WAV back, with no upload: the two windows pass the files with `postMessage` in the same browser. [Strata](https://strataeditor.dev) uses this to speak a film's subtitles. The popup answers only the window that opened it (`window.opener`), and only if its origin is `https://strataeditor.dev` or `localhost` / `127.0.0.1` on any port (`docs/handoff.js`, tested by `test/handoff.test.mjs`). Opened in a normal tab, none of this runs.
+
+```
+dub -> opener   { webcli: 1, type: 'ready', tool, version, ops, voices: [{ id, name, accent, gender }], defaults: { voice, tier, device } }
+opener -> dub   { webcli: 1, type: 'job', id, op: 'dub', args: { voice?, tier?, device?, name? }, files: { 'subtitles.srt': ArrayBuffer } }
+opener -> dub   { webcli: 1, type: 'cancel', id }
+dub -> opener   { webcli: 1, type: 'progress' | 'result' | 'error', id, ... }     result.files['narration.wav'], result.meta = { report, voice, tier, device }
+```
+
+- **Unknown values are errors.** A `voice`, `tier` or `device` that dub does not offer (or that this browser cannot run, like `webgpu` without WebGPU) is an `error` naming the valid values. Empty or absent means the default: `af_heart`, `default` (q8), `wasm`. That combination is the one dub documents as byte-reproducible, and `result.meta.report.reproducible` says whether the chosen one is.
+- **Collisions are not sent silently.** A dub whose report is not `ok` waits for **Send to Strata anyway** (the WAV and the report with `ok: false`) or **Don't send** (an `error` naming the problem).
+- **Cancel** stops synthesis after the cue in progress and answers `error: Cancelled.`; the tool is then free for the next job. Closing the opener window cancels the running job the same way.
+- **First use downloads the model** (about 90 MB, cached per site); the window says so.
+- **Keep the popup visible.** Measured in Chrome on macOS, 12 cues of `projectile` took ~142 s with the popup visible, whether focused or not (4 cues: 49.9 s unfocused vs 49.7 s focused), but a popup that was covered by another window or in a hidden tab took 322 s for 4 cues and 931 s for all 12, about 6.5 times longer. The window says to keep it visible, and its title warns while it is hidden. Placing it beside the opener instead of behind it costs nothing.
+- **`localhost` can drive the popup.** Any page served from `localhost` or `127.0.0.1` on the user's own machine is allowed to send jobs, so that Strata can be developed locally. Do not widen the list; if Strata moves domains, change `ALLOWED_ORIGINS` in `docs/handoff.js` (identical in ffmpeg.webcli.app, change both).
+
+The full protocol is in Strata's `guides/HANDOFF.md`. `npm run test:handoff` drives the popup in real Chrome from a fake opener (collision prompt, cancel and a second job, closed opener, voice validation, byte-identical re-runs).
+
 ## Part of the Web-CLI family
 
 A family of zero-egress browser tools - your data never leaves your device, verifiable in DevTools. All free and open source.

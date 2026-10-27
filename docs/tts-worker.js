@@ -55,6 +55,8 @@ self.onmessage = async ({ data }) => {
       await load(data);
       post({ type: 'loaded' });
       for (let k = 0; k < data.jobs.length; k++) {
+        // Inference only awaits microtasks, so without a macrotask turn a 'cancel' message is not delivered until the loop ends.
+        await new Promise((resolve) => setTimeout(resolve, 0));
         if (cancelled) {
           post({ type: 'cancelled' });
           return;

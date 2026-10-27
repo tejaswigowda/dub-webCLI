@@ -1,6 +1,7 @@
 import { parseSrt } from './core/srt.js';
 import { layout, mix, encodeWav, sha256Hex, buildReport } from './core/timeline.js';
-import { MODEL_ID, MODEL_REVISION, KOKORO_JS_VERSION, SAMPLE_RATE, TIERS, DEVICES, VOICES, PREVIEW_TEXT, VOICE_BYTES, fmtBytes } from './core/models.js';
+import { serve } from './handoff.js';
+import { MODEL_ID, MODEL_REVISION, KOKORO_JS_VERSION, SAMPLE_RATE, TIERS, DEVICES, VOICES, DEFAULTS, PREVIEW_TEXT, VOICE_BYTES, fmtBytes, resolveArgs } from './core/models.js';
 
 const $ = (id) => document.getElementById(id);
 const HF_BASE = `https://huggingface.co/${MODEL_ID}/resolve/main/`;
@@ -17,7 +18,7 @@ equals the sum of the squares on the other two sides.
 That is the Pythagorean theorem.
 `;
 
-const state = { srt: null, busy: false, result: null, worker: null, cachedTiers: new Set(), cachedVoices: new Set() };
+const state = { srt: null, busy: false, result: null, lastError: null, onProgress: null, worker: null, cachedTiers: new Set(), cachedVoices: new Set() };
 
 // ── status helpers ──
 function setStatus(text, kind = '') {
@@ -37,13 +38,13 @@ function fillSelectors() {
     }
     voice.append(g);
   }
-  voice.value = 'af_heart';
+  voice.value = DEFAULTS.voice;
 
   for (const key of Object.keys(TIERS)) $('tier').append(new Option('', key));
-  $('tier').value = 'default';
+  $('tier').value = DEFAULTS.tier;
 
   for (const [key, d] of Object.entries(DEVICES)) $('device').append(new Option(d.label, key));
-  $('device').value = 'wasm';
+  $('device').value = DEFAULTS.device;
   if (!('gpu' in navigator)) $('device').querySelector('option[value="webgpu"]').disabled = true;
 }
 
@@ -179,6 +180,7 @@ function showProgress(frac, text) {
   $('progress').hidden = frac === null;
   if (frac !== null) $('bar').style.width = `${Math.round(frac * 100)}%`;
   $('progressText').textContent = text ?? '';
+  if (frac !== null) state.onProgress?.(frac, text ?? '');
 }
 
 function onLoadProgress(d) {
@@ -197,6 +199,8 @@ async function dub() {
   const jobs = parsed.cues.filter((c) => c.status === 'ok').map((c) => ({ i: c.i, text: c.text }));
 
   state.busy = true;
+  state.lastError = null;
+  warnIfHidden();
   refreshUi();
   setStatus(state.cachedTiers.has(tierKey) ? 'Loading model…' : `Downloading model (${fmtBytes(TIERS[tierKey].bytes)})…`, 'busy');
   const audio = new Map();
@@ -212,14 +216,19 @@ async function dub() {
       }
     });
     if (end.type === 'cancelled') {
+      state.lastError = 'Cancelled.';
       setStatus('Cancelled.', '');
-      return;
+      return null;
     }
     await finish({ audio, sampleRate, dtype, device, voice, parsed });
+    return state.result;
   } catch (err) {
+    state.lastError = err.message;
     setStatus(`Failed: ${err.message}`, 'fail');
+    return null;
   } finally {
     state.busy = false;
+    warnIfHidden();
     showProgress(null);
     refreshCacheState();
   }
@@ -365,11 +374,93 @@ async function preview() {
   }
 }
 
+// ── hand-off: another page (Strata) opened this one and wants the WAV for its subtitles ──
+function handoffBar(text, kind, buttons = []) {
+  const bar = $('handoffBar');
+  bar.hidden = false;
+  bar.className = `banner ${kind}`;
+  bar.replaceChildren();
+  const head = document.createElement('div');
+  head.textContent = text;
+  bar.append(head, ...buttons);
+}
+
+function askToSend(report, signal) {
+  return new Promise((resolve, reject) => {
+    const send = Object.assign(document.createElement('button'), { className: 'btn btn-primary btn-sm', type: 'button', textContent: 'Send to Strata anyway' });
+    const keep = Object.assign(document.createElement('button'), { className: 'btn btn-ghost btn-sm', type: 'button', textContent: "Don't send" });
+    const problems = `${report.collisions} collisions, ${report.truncated} truncated, ${report.input_errors} input errors`;
+    send.addEventListener('click', () => resolve());
+    keep.addEventListener('click', () => reject(new Error(`The dub had problems (${problems}) and was not sent. Fix the subtitles and try again.`)));
+    signal.addEventListener('abort', () => reject(new Error('Cancelled.')));
+    if (signal.aborted) return reject(new Error('Cancelled.'));
+    handoffBar(`This dub has problems (${problems}). Strata is waiting.`, 'fail', [send, keep]);
+  });
+}
+
+async function handleDub({ args, files, progress, signal }) {
+  try {
+    return await runDub({ args, files, progress, signal });
+  } catch (err) {
+    handoffBar(err.message === 'Cancelled.' ? 'Cancelled. Nothing was sent.' : `Not sent: ${err.message}`, 'fail');
+    throw err;
+  }
+}
+
+// Measured: a popup that is covered or in a hidden tab synthesizes about 6x slower than one that is visible, even if unfocused.
+const KEEP_VISIBLE = 'Keep this window visible while it works: when it is hidden or covered, the browser slows it about 6 times.';
+const TITLE = document.title;
+function warnIfHidden() {
+  document.title = state.busy && document.visibilityState === 'hidden' ? '⚠ Hidden: dub runs slowly. Bring this window forward.' : TITLE;
+}
+
+async function runDub({ args, files, progress, signal }) {
+  if (state.busy) throw new Error('This tool is busy.');
+  const bytes = files['subtitles.srt'];
+  if (!bytes) throw new Error("The job needs a file named 'subtitles.srt'.");
+  const choice = resolveArgs(args, { webgpu: 'gpu' in navigator });
+  loadSrt(typeof args.name === 'string' && args.name ? args.name : 'subtitles.srt', new TextDecoder().decode(bytes));
+  if (state.srt.parsed.fatal) throw new Error('The SRT is malformed: ' + (state.srt.parsed.issues[0]?.message ?? 'no cues could be read.'));
+  if (!state.srt.parsed.cues.some((c) => c.status === 'ok')) throw new Error('The SRT has no cue that can be synthesized.');
+  // An absent value means dub's default, not whatever an earlier job left in the selector.
+  for (const id of ['voice', 'tier', 'device']) $(id).value = choice[id];
+  await refreshCacheState();
+  const need = downloadBytes();
+  handoffBar(
+    need > 0
+      ? `Dubbing for Strata. The voice model (${fmtBytes(need)}) is downloaded this first time and cached, so this window may look idle for a while. Nothing leaves this browser except that download. ${KEEP_VISIBLE}`
+      : `Dubbing for Strata. The WAV is sent back when it is done; nothing leaves this browser. ${KEEP_VISIBLE}`,
+    'ok',
+  );
+  signal.addEventListener('abort', () => state.worker?.postMessage({ type: 'cancel' }));
+  if (signal.aborted) throw new Error('Cancelled.');
+  state.onProgress = progress;
+  let res;
+  try {
+    res = await dub();
+  } finally {
+    state.onProgress = null;
+  }
+  if (!res) throw new Error(state.lastError || 'The dub did not finish.');
+  if (!res.report.ok) await askToSend(res.report, signal);
+  if (signal.aborted) throw new Error('Cancelled.');
+  handoffBar('Sent to Strata. You can close this window.', 'ok');
+  return { files: { 'narration.wav': res.wav }, meta: { report: res.report, voice: choice.voice, tier: choice.tier, device: choice.device } };
+}
+
+serve({
+  tool: 'dub.webcli.app',
+  version: '1',
+  handlers: { dub: handleDub },
+  info: { voices: VOICES.map(({ id, name, accent, gender }) => ({ id, name, accent, gender })), defaults: { ...DEFAULTS } },
+});
+
 // ── boot ──
 fillSelectors();
 wireInput();
 refreshUi();
 refreshCacheState();
+document.addEventListener('visibilitychange', warnIfHidden);
 ['tier', 'device', 'voice'].forEach((id) => $(id).addEventListener('change', refreshUi));
 $('dubBtn').addEventListener('click', dub);
 $('previewBtn').addEventListener('click', preview);
